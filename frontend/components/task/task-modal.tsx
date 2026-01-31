@@ -74,16 +74,16 @@ export function TaskModal({ isOpen, onClose, task, onSave, isSubmitting = false 
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
-        <DialogHeader>
-          <DialogTitle>
+      <DialogContent className="sm:max-w-lg rounded-2xl glass-card border-white/30 backdrop-blur-xl bg-white/10 dark:bg-black/20 p-0 max-w-md" aria-describedby={undefined}>
+        <DialogHeader className="px-6 pt-6 pb-4">
+          <DialogTitle className="text-2xl font-bold bg-gradient-purple-pink bg-clip-text text-transparent">
             {task ? 'Edit Task' : 'Add New Task'}
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          <div className="space-y-2">
-            <label htmlFor="title" className="text-sm font-medium">
+        <form onSubmit={handleSubmit} className="space-y-6 px-6 pb-6" noValidate>
+          <div className="space-y-3">
+            <label htmlFor="title" className="text-sm font-semibold text-foreground/90">
               Title *
             </label>
             <Input
@@ -92,18 +92,18 @@ export function TaskModal({ isOpen, onClose, task, onSave, isSubmitting = false 
               value={formData.title}
               onChange={handleChange}
               placeholder="Task title"
-              className={errors.title ? 'border-red-500' : ''}
+              className={`${errors.title ? 'border-red-500' : 'border-white/30'} h-12 text-base`}
               aria-invalid={!!errors.title}
               aria-describedby={errors.title ? "title-error" : undefined}
               required
             />
             {errors.title && (
-              <p id="title-error" className="text-red-500 text-sm" role="alert">{errors.title}</p>
+              <p id="title-error" className="text-red-400 text-sm" role="alert">{errors.title}</p>
             )}
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="description" className="text-sm font-medium">
+          <div className="space-y-3">
+            <label htmlFor="description" className="text-sm font-semibold text-foreground/90">
               Description
             </label>
             <Textarea
@@ -112,19 +112,32 @@ export function TaskModal({ isOpen, onClose, task, onSave, isSubmitting = false 
               value={formData.description}
               onChange={handleChange}
               placeholder="Task description (optional)"
-              rows={3}
+              rows={4}
+              className="border-white/30 text-base min-h-[120px]"
               aria-describedby={errors.description ? "description-error" : undefined}
             />
             {errors.description && (
-              <p id="description-error" className="text-red-500 text-sm" role="alert">{errors.description}</p>
+              <p id="description-error" className="text-red-400 text-sm" role="alert">{errors.description}</p>
             )}
           </div>
 
-          <div className="flex justify-end space-x-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose} aria-label="Cancel">
+          <div className="flex justify-end space-x-3 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              className="h-11 px-5 text-base font-medium"
+              aria-label="Cancel"
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting} aria-busy={isSubmitting}>
+            <Button
+              type="submit"
+              variant="gradient"
+              disabled={isSubmitting}
+              className="h-11 px-6 text-base font-bold"
+              aria-busy={isSubmitting}
+            >
               {isSubmitting
                 ? (task ? 'Updating...' : 'Creating...')
                 : (task ? 'Update Task' : 'Create Task')

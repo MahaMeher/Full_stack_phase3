@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     better_auth_secret: str
     better_auth_url: str
 
+    # Cohere API settings
+    cohere_api_key: str
+
     # Application settings
     debug: bool = False
     log_level: str = "info"

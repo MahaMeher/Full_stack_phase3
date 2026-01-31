@@ -12,6 +12,8 @@ from sqlmodel import SQLModel
 from src.config.database import engine
 from src.models.task import Task
 from src.models.user import User
+from src.models.conversation import Conversation
+from src.models.message import Message
 
 def create_tables():
     """Create all database tables."""

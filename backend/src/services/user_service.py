@@ -1,6 +1,6 @@
 from sqlmodel import Session, select
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from ..models.user import User, UserCreate, UserUpdate, UserLogin
 from ..utils.exceptions import UserNotFoundException, UserAlreadyExistsException, InvalidCredentialsException
 from passlib.context import CryptContext
@@ -154,8 +154,12 @@ class UserService:
 
         # Add to session and commit
         session.add(user)
-        session.commit()
-        session.refresh(user)
+        try:
+            session.commit()
+            session.refresh(user)
+        except Exception:
+            session.rollback()
+            raise
 
         return user
 
@@ -181,9 +185,13 @@ class UserService:
             raise InvalidCredentialsException("User account is deactivated")
 
         # Update last login time
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(timezone.utc)
         session.add(user)
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
 
         return user
 
@@ -211,11 +219,15 @@ class UserService:
             if value is not None:
                 setattr(user, field, value)
 
-        user.updated_at = datetime.utcnow()
+        user.updated_at = datetime.now(timezone.utc)
 
         session.add(user)
-        session.commit()
-        session.refresh(user)
+        try:
+            session.commit()
+            session.refresh(user)
+        except Exception:
+            session.rollback()
+            raise
 
         return user
 
@@ -236,6 +248,10 @@ class UserService:
             return False
 
         session.delete(user)
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
 
         return True

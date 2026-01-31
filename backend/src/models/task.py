@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 
@@ -16,8 +16,8 @@ class Task(TaskBase, table=True):
     """
     id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field(index=True)  # Foreign key reference to user, extracted from JWT
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class TaskRead(TaskBase):

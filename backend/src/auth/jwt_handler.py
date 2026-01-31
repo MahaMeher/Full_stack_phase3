@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import jwt
 from fastapi import HTTPException, status
@@ -25,7 +25,7 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
 
         # Check if token is expired
         exp = payload.get("exp")
-        if exp and datetime.fromtimestamp(exp) < datetime.utcnow():
+        if exp and datetime.fromtimestamp(exp, tz=timezone.utc) < datetime.now(timezone.utc):
             return None
 
         return payload

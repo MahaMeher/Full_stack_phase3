@@ -26,12 +26,16 @@ class TaskService:
             user_id=user_id,
             title=task_data.title,
             description=task_data.description,
-            completed=task_data.completed or False
+            completed=getattr(task_data, 'completed', False)  # Use getattr to handle both old and new models
         )
         session.add(task)
-        session.commit()
-        session.refresh(task)
-        return task
+        try:
+            session.commit()
+            session.refresh(task)
+            return task
+        except Exception:
+            session.rollback()
+            raise
 
     @staticmethod
     def get_tasks_by_user_id(session: Session, user_id: str) -> List[Task]:
@@ -93,9 +97,13 @@ class TaskService:
             setattr(task, field, value)
 
         session.add(task)
-        session.commit()
-        session.refresh(task)
-        return task
+        try:
+            session.commit()
+            session.refresh(task)
+            return task
+        except Exception:
+            session.rollback()
+            raise
 
     @staticmethod
     def delete_task(session: Session, task_id: str, user_id: str) -> bool:
@@ -115,8 +123,12 @@ class TaskService:
             return False
 
         session.delete(task)
-        session.commit()
-        return True
+        try:
+            session.commit()
+            return True
+        except Exception:
+            session.rollback()
+            raise
 
     @staticmethod
     def toggle_task_completion(session: Session, task_id: str, user_id: str) -> Optional[Task]:
@@ -137,6 +149,10 @@ class TaskService:
 
         task.completed = not task.completed
         session.add(task)
-        session.commit()
-        session.refresh(task)
-        return task
+        try:
+            session.commit()
+            session.refresh(task)
+            return task
+        except Exception:
+            session.rollback()
+            raise

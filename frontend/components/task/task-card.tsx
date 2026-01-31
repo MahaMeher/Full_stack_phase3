@@ -29,75 +29,48 @@ const TaskCardComponent = ({ task, onToggleComplete, onEdit, onDelete }: TaskCar
   };
 
   return (
-    <div className={`border rounded-lg p-5 transition-all duration-300 ease-in-out transform hover:shadow-md ${
-      task.completed ? 'bg-muted/20 opacity-70 grayscale' : 'bg-card'
-    }`}>
-      <div className="flex items-start gap-4">
-        <div className="relative">
-          <input
-            type="checkbox"
+    <div className={`rounded-2xl p-6 transition-all duration-500 ease-out transform hover:scale-[1.02] glass-card border border-white/20 animate-fade-in-up ${
+      task.completed ? 'opacity-80 grayscale' : ''
+    }`} style={{ animationDelay: `${Math.random() * 200}ms` }}>
+      <div className="flex items-start gap-5">
+        <div className="relative mt-1">
+          <Checkbox
             checked={task.completed}
-            onChange={toggleComplete}
-            className="absolute opacity-0 w-6 h-6 cursor-pointer z-10"
-            aria-label={`Mark task "${task.title}" as ${task.completed ? 'incomplete' : 'complete'}`}
+            onCheckedChange={toggleComplete}
+            className="h-6 w-6 rounded-full border-2 transition-all duration-300 data-[state=checked]:bg-gradient-purple-pink data-[state=checked]:border-transparent data-[state=checked]:scale-110 hover:scale-105"
           />
-          <div
-            className={`relative w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all duration-200 cursor-pointer
-              ${task.completed
-                ? 'bg-green-500 border-green-500 text-white'
-                : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'
-              }`}
-            onClick={toggleComplete}
-          >
-            {task.completed && (
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={3}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            )}
-          </div>
         </div>
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
-            <h3 className={`text-lg font-bold transition-all duration-300 ${
+            <h3 className={`text-xl font-bold transition-all duration-300 ${
               task.completed
-                ? 'line-through text-muted-foreground/60 opacity-70'
-                : 'text-foreground'
+                ? 'line-through bg-gradient-to-r from-gray-400 to-gray-600 bg-clip-text text-transparent'
+                : 'bg-gradient-purple-pink bg-clip-text text-transparent hover:scale-105'
             }`}>
               {task.title}
             </h3>
           </div>
 
           {task.description && (
-            <p className={`mt-2 text-base transition-all duration-300 ${
-              task.completed ? 'text-muted-foreground/60' : 'text-muted-foreground'
-            }`}>
+            <p className={`mt-3 text-base transition-all duration-300 ${
+              task.completed ? 'text-muted-foreground/70' : 'text-muted-foreground'
+            } hover:scale-[1.01]`}>
               {task.description}
             </p>
           )}
 
-          <div className={`mt-3 flex items-center justify-between text-xs transition-all duration-300 ${
-            task.completed ? 'text-muted-foreground/50' : 'text-muted-foreground/70'
+          <div className={`mt-4 flex items-center justify-between text-sm transition-all duration-300 ${
+            task.completed ? 'text-muted-foreground/60' : 'text-muted-foreground/80'
           }`}>
-            <span className="flex items-center gap-1">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <span className="flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               Created: {formatDate(task.createdAt)}
             </span>
-            <span className="flex items-center gap-1">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <span className="flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               Updated: {formatDate(task.updatedAt)}
@@ -105,21 +78,21 @@ const TaskCardComponent = ({ task, onToggleComplete, onEdit, onDelete }: TaskCar
           </div>
         </div>
 
-        <div className="flex gap-1 transition-opacity duration-200">
+        <div className="flex gap-2 transition-all duration-300 hover:scale-105">
           <Button
             variant="outline"
             size="sm"
             onClick={handleEdit}
-            className="transition-all duration-200 hover:scale-105"
+            className="transition-all duration-300 hover:scale-105 text-sm font-medium hover:shadow-lg"
             aria-label="Edit task"
           >
             Edit
           </Button>
           <Button
-            variant="outline"
+            variant="destructive"
             size="sm"
             onClick={handleDelete}
-            className="transition-all duration-200 hover:scale-105 hover:bg-destructive hover:text-destructive-foreground"
+            className="transition-all duration-300 hover:scale-105 text-sm font-medium hover:shadow-lg"
             aria-label="Delete task"
           >
             Delete

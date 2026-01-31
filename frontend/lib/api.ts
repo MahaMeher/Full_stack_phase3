@@ -3,6 +3,8 @@ import { Task, TaskFormData } from '@/types/task';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
+export { API_BASE_URL };
+
 export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
@@ -253,6 +255,27 @@ class ApiClient {
       return { data: transformedTask, success: true };
     }
     return { error: response.error || 'Failed to toggle task completion', success: false };
+  }
+
+  // Chat API methods
+  async sendMessage(message: string, conversationId?: string): Promise<ApiResponse<any>> {
+    const requestBody: any = { message };
+    if (conversationId) {
+      requestBody.conversation_id = conversationId;
+    }
+
+    const response = await this.post<any>('/api/chat', requestBody);
+    return response;
+  }
+
+  async getConversationHistory(conversationId: string): Promise<ApiResponse<any>> {
+    const response = await this.get<any>(`/api/conversations/${conversationId}`);
+    return response;
+  }
+
+  async deleteConversation(conversationId: string): Promise<ApiResponse<any>> {
+    const response = await this.delete<any>(`/api/conversations/${conversationId}`);
+    return response;
   }
 }
 
