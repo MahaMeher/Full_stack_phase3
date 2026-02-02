@@ -50,8 +50,8 @@ export default function SignInPage() {
   return (
     <div className="space-y-4">
       <div className="text-center">
-        <CardTitle className="text-2xl font-bold">Sign In</CardTitle>
-        <CardDescription className="mt-2">
+        <CardTitle className="text-2xl font-bold text-foreground">Sign In</CardTitle>
+        <CardDescription className="mt-2 text-foreground/80">
           Enter your credentials to access your account
         </CardDescription>
       </div>
@@ -72,7 +72,7 @@ export default function SignInPage() {
               placeholder="name@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className={errors.email ? 'border-red-500' : ''}
+              className={errors.email ? 'border-red-500' : 'bg-white/90 dark:bg-gray-800/90'}
             />
             {errors.email && (
               <p className="text-red-500 text-sm">{errors.email}</p>
@@ -88,7 +88,7 @@ export default function SignInPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className={errors.password ? 'border-red-500' : ''}
+              className={errors.password ? 'border-red-500' : 'bg-white/90 dark:bg-gray-800/90'}
             />
             {errors.password && (
               <p className="text-red-500 text-sm">{errors.password}</p>

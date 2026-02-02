@@ -14,8 +14,13 @@ export default function SignUpPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+
   const router = useRouter();
   const { register, loading } = useAuth();
+
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,8 +55,8 @@ export default function SignUpPage() {
   return (
     <div className="space-y-4">
       <div className="text-center">
-        <CardTitle className="text-2xl font-bold">Sign Up</CardTitle>
-        <CardDescription className="mt-2">
+        <CardTitle className="text-2xl font-bold text-foreground">Sign Up</CardTitle>
+        <CardDescription className="mt-2 text-foreground/80">
           Create an account to get started
         </CardDescription>
       </div>
@@ -72,7 +77,7 @@ export default function SignUpPage() {
               placeholder="John Doe"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className={errors.name ? 'border-red-500' : ''}
+              className={errors.name ? 'border-red-500 bg-white/90 dark:bg-gray-800/90' : 'bg-white/90 dark:bg-gray-800/90'}
             />
             {errors.name && (
               <p className="text-red-500 text-sm">{errors.name}</p>
@@ -89,7 +94,7 @@ export default function SignUpPage() {
               placeholder="name@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className={errors.email ? 'border-red-500' : ''}
+              className={errors.email ? 'border-red-500 bg-white/90 dark:bg-gray-800/90' : 'bg-white/90 dark:bg-gray-800/90'}
             />
             {errors.email && (
               <p className="text-red-500 text-sm">{errors.email}</p>
@@ -104,8 +109,8 @@ export default function SignUpPage() {
               id="password"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={errors.password ? 'border-red-500' : ''}
+              onChange={handlePasswordChange}
+              className={errors.password ? 'border-red-500 bg-white/90 dark:bg-gray-800/90' : 'bg-white/90 dark:bg-gray-800/90'}
             />
             {errors.password && (
               <p className="text-red-500 text-sm">{errors.password}</p>

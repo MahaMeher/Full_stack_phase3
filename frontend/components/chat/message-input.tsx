@@ -43,7 +43,7 @@ export default function MessageInput({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         disabled={disabled}
-        className="flex-1"
+        className="flex-1 bg-white/90 dark:bg-gray-800/90"
       />
       <Button
         onClick={handleSubmit}

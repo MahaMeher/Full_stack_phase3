@@ -45,8 +45,8 @@ const TaskCardComponent = ({ task, onToggleComplete, onEdit, onDelete }: TaskCar
           <div className="flex items-center justify-between">
             <h3 className={`text-xl font-bold transition-all duration-300 ${
               task.completed
-                ? 'line-through bg-gradient-to-r from-gray-400 to-gray-600 bg-clip-text text-transparent'
-                : 'bg-gradient-purple-pink bg-clip-text text-transparent hover:scale-105'
+                ? 'line-through text-muted-foreground/70'
+                : 'text-foreground'
             }`}>
               {task.title}
             </h3>

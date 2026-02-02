@@ -39,9 +39,19 @@ class CohereAgent:
         You must use the available tools to perform any task operations.
         Do not attempt to modify data directly - always use the appropriate tools.
 
+        CRITICAL: When a user asks you to perform an action, DO IT IMMEDIATELY without asking for confirmation.
+        Only ask for clarification if the request is genuinely ambiguous, not just to confirm what was requested.
+
+        For example:
+        - If user says "mark the task buy laptop as completed", immediately execute complete_task
+        - If user says "update the task buy laptop to buy phone", immediately execute update_task
+        - If user says "delete the task buy laptop", immediately execute delete_task
+        - Only ask for clarification if you can't identify which task they mean
+
         For casual conversation (greetings, small talk, general questions), respond naturally
-        without attempting to use any tools. Only use tools when the user explicitly requests
-        task-related operations like adding, listing, updating, completing, or deleting tasks.
+        and use the get_user_info tool to personalize responses when appropriate.
+        Only use task-related tools when the user explicitly requests task operations
+        like adding, listing, updating, completing, or deleting tasks.
 
         When parsing user requests, pay attention to natural language constructs like "as well",
         "too", "also", etc. These typically mean to apply the same action or include the same
@@ -56,11 +66,15 @@ class CohereAgent:
         - update_task: Update an existing task's title, description, or completion status
         - complete_task: Mark a task as completed
         - delete_task: Delete a task
+        - get_user_info: Retrieve the current user's information including name, email, and other profile details
 
         Always use the most appropriate tool for the user's request.
         When listing tasks, provide clear and organized information.
-        When updating tasks, confirm the changes with the user.
-        For general conversation, respond naturally without using tools.
+        When updating tasks, execute the changes immediately without asking for confirmation.
+        For personalization and greetings, use get_user_info to get user details.
+        For general conversation, respond naturally and appropriately use get_user_info when relevant.
+
+        Remember: Execute user requests immediately. Don't ask "Would you like me to..." - just do what they asked.
         """
 
     def _prepare_conversation_history(self, messages: List[Dict[str, str]]) -> str:
@@ -285,32 +299,98 @@ class CohereToolAgent(CohereAgent):
 
         # Check if the input is a casual conversation that doesn't require tools
         if self._is_general_conversation(user_input):
-            # Handle general conversation without tools
-            try:
-                response = self.client.chat(
-                    message=user_input,
-                    model=self.model,
-                    preamble=self._format_system_instructions()
-                )
+            # Handle general conversation without tools, but allow for user info when appropriate
+            # Check if user is asking for their information
+            lower_input = user_input.lower().strip()
 
-                return {
-                    "response": response.text,
-                    "tool_calls": [],
-                    "tool_results": [],
-                    "has_tool_calls": False
-                }
-            except Exception as e:
-                return {
-                    "response": f"I'm doing well, thank you for asking! How can I help you today?",
-                    "tool_calls": [],
-                    "tool_results": [],
-                    "has_tool_calls": False,
-                    "error": str(e)
-                }
+
+            user_info_patterns = [
+                'who am i', 'what is my name', 'what is my email', 'tell me about me',
+                'my information', 'my profile', 'show my details', 'user details'
+            ]
+
+            requires_user_info = any(pattern in lower_input for pattern in user_info_patterns)
+
+            if requires_user_info:
+                # Execute get_user_info tool to get user details
+                user_info_result = self.mcp_server.execute_tool('get_user_info')
+
+                if user_info_result.success and user_info_result.data:
+                    user_info = user_info_result.data
+                    user_name = user_info.get('name', user_info.get('email', 'User'))
+
+                    # Craft a personalized response
+                    if 'who am i' in lower_input or 'what is my name' in lower_input:
+                        response_text = f"You are {user_name}. Nice to see you again!"
+                    elif 'what is my email' in lower_input:
+                        user_email = user_info.get('email', 'unknown')
+                        response_text = f"Your email address is {user_email}."
+                    elif 'tell me about me' in lower_input or 'my profile' in lower_input:
+                        response_text = f"Your name is {user_name} and your email is {user_info.get('email', 'unknown')}."
+                    else:
+                        response_text = f"Hello {user_name}! I'm your AI task assistant. You can ask me to add, list, update, or complete tasks."
+
+                    return {
+                        "response": response_text,
+                        "tool_calls": [{"name": "get_user_info", "parameters": {}}],
+                        "tool_results": [{
+                            "tool_call_id": None,
+                            "name": "get_user_info",
+                            "parameters": {},
+                            "result": user_info_result.dict() if hasattr(user_info_result, 'dict') else {"success": user_info_result.success, "data": user_info_result.data, "error": user_info_result.error}
+                        }],
+                        "has_tool_calls": True
+                    }
+                else:
+                    # If user info tool fails, respond generically
+                    try:
+                        response = self.client.chat(
+                            message=user_input,
+                            model=self.model,
+                            preamble=self._format_system_instructions()
+                        )
+
+                        return {
+                            "response": response.text,
+                            "tool_calls": [],
+                            "tool_results": [],
+                            "has_tool_calls": False
+                        }
+                    except Exception as e:
+                        return {
+                            "response": f"Hello! I'm your AI task assistant. You can ask me to add, list, update, or complete tasks.",
+                            "tool_calls": [],
+                            "tool_results": [],
+                            "has_tool_calls": False,
+                            "error": str(e)
+                        }
+            else:
+                # Handle general conversation without tools
+                try:
+                    response = self.client.chat(
+                        message=user_input,
+                        model=self.model,
+                        preamble=self._format_system_instructions()
+                    )
+
+                    return {
+                        "response": response.text,
+                        "tool_calls": [],
+                        "tool_results": [],
+                        "has_tool_calls": False
+                    }
+                except Exception as e:
+                    return {
+                        "response": f"I'm doing well, thank you for asking! How can I help you today?",
+                        "tool_calls": [],
+                        "tool_results": [],
+                        "has_tool_calls": False,
+                        "error": str(e)
+                    }
 
         # Prepare the full context
         full_context = self._prepare_conversation_history(conversation_history)
-        full_context += f"User: {user_input}"
+        full_context += f"\nUser: {user_input}"
 
         # Get available tool schemas and adapt for Cohere format
         original_schemas = self.mcp_server.get_all_tool_schemas()
@@ -414,9 +494,10 @@ class CohereToolAgent(CohereAgent):
                         final_response = self.client.chat(
                             message=user_input,  # Original user input
                             model=self.model,
+                            preamble=self._format_system_instructions(),
                             tools=tool_schemas,
-                            tool_results=executed_tool_results
-                            # Removed force_single_step to avoid the hallucination issue
+                            tool_results=executed_tool_results,
+                            force_single_step=True  # Required when providing tool_results
                         )
                         response = final_response
             else:
@@ -483,7 +564,7 @@ class CohereToolAgent(CohereAgent):
 
     def _is_general_conversation(self, user_input: str) -> bool:
         """
-        Determine if the user input is a general conversation that doesn't require tools.
+        Determine if the user input is a general conversation that might benefit from user info.
 
         Args:
             user_input: The user's input message
@@ -494,13 +575,14 @@ class CohereToolAgent(CohereAgent):
         # Convert to lowercase for easier matching
         lower_input = user_input.lower().strip()
 
-        # Check for common greeting patterns
+        # Check for common greeting patterns that should use user info
         greeting_patterns = [
             'hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon',
             'good evening', 'how are you', 'how do you do', 'howdy', 'yo',
             'what\'s up', 'sup', 'good day', 'nice to meet you', 'pleased to meet you',
             'how\'s it going', 'how are things', 'how have you been', 'what\'s new',
-            'how is everything', 'hope you are doing well', 'hope you\'re well'
+            'how is everything', 'hope you are doing well', 'hope you\'re well',
+            'what is your name', 'who is this', 'who are you talking to'
         ]
 
         # Check if input matches any greeting pattern
@@ -509,7 +591,9 @@ class CohereToolAgent(CohereAgent):
                 return True
 
         # Check for simple responses that don't require tools
-        if lower_input in ['thanks', 'thank you', 'please', 'ok', 'okay', 'sure', 'yes', 'no', 'maybe']:
+        # Don't include 'yes', 'no', 'sure' here as they might be responses to tool prompts
+        # But exclude them if they appear in isolation (single word responses)
+        if lower_input in ['thanks', 'thank you', 'please', 'maybe'] or (len(lower_input.split()) == 1 and lower_input in ['ok', 'okay']):
             return True
 
         # Check for questions about the AI itself
@@ -521,6 +605,16 @@ class CohereToolAgent(CohereAgent):
         for pattern in ai_related_questions:
             if pattern in lower_input:
                 return True
+
+        # Check for questions about user info that should trigger the get_user_info tool
+        user_info_patterns = [
+            'who am i', 'what is my name', 'what is my email', 'tell me about me',
+            'my information', 'my profile', 'show my details', 'user details'
+        ]
+
+        for pattern in user_info_patterns:
+            if pattern in lower_input:
+                return False  # These should trigger the get_user_info tool, not be general conversation
 
         return False
 
@@ -580,6 +674,8 @@ class CohereToolAgent(CohereAgent):
                     if match3:
                         extracted_task_name = match3.group(1).strip()
                         if extracted_task_name:
+                            # Remove common articles and prepositions that might be included in the extracted name
+                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
                             task_id = self._find_task_by_name(extracted_task_name)
                             if task_id:
                                 resolved_params = parameters.copy()
@@ -592,6 +688,8 @@ class CohereToolAgent(CohereAgent):
                     if match4:
                         extracted_task_name = match4.group(1).strip()
                         if extracted_task_name:
+                            # Remove common articles and prepositions that might be included in the extracted name
+                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
                             task_id = self._find_task_by_name(extracted_task_name)
                             if task_id:
                                 resolved_params = parameters.copy()
@@ -604,6 +702,8 @@ class CohereToolAgent(CohereAgent):
                     if match5:
                         extracted_task_name = match5.group(1).strip()
                         if extracted_task_name:
+                            # Remove common articles and prepositions that might be included in the extracted name
+                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
                             task_id = self._find_task_by_name(extracted_task_name)
                             if task_id:
                                 resolved_params = parameters.copy()
@@ -616,6 +716,8 @@ class CohereToolAgent(CohereAgent):
                     if match6:
                         extracted_task_name = match6.group(1).strip()
                         if extracted_task_name:
+                            # Remove common articles and prepositions that might be included in the extracted name
+                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
                             task_id = self._find_task_by_name(extracted_task_name)
                             if task_id:
                                 resolved_params = parameters.copy()
@@ -628,6 +730,8 @@ class CohereToolAgent(CohereAgent):
                     if match7:
                         extracted_task_name = match7.group(1).strip()
                         if extracted_task_name:
+                            # Remove common articles and prepositions that might be included in the extracted name
+                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
                             task_id = self._find_task_by_name(extracted_task_name)
                             if task_id:
                                 resolved_params = parameters.copy()
@@ -640,6 +744,8 @@ class CohereToolAgent(CohereAgent):
                     if match8:
                         extracted_task_name = match8.group(1).strip()
                         if extracted_task_name:
+                            # Remove common articles and prepositions that might be included in the extracted name
+                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
                             task_id = self._find_task_by_name(extracted_task_name)
                             if task_id:
                                 resolved_params = parameters.copy()

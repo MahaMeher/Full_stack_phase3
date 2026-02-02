@@ -162,7 +162,7 @@ export default function ChatWindow({ isOpen, onClose, conversationId }: ChatWind
           >
             <Card className="flex flex-col h-full border-0 rounded-lg shadow-none">
               <CardHeader className="flex flex-row items-center justify-between p-4 border-b">
-                <CardTitle className="text-lg flex items-center gap-2">
+                <CardTitle className="text-lg flex items-center gap-2 text-foreground">
                   <Bot className="h-5 w-5 text-primary" />
                   AI Task Assistant
                 </CardTitle>
@@ -252,7 +252,7 @@ export default function ChatWindow({ isOpen, onClose, conversationId }: ChatWind
                       onKeyDown={handleKeyDown}
                       placeholder="Ask me to add, list, or manage your tasks..."
                       disabled={isLoading}
-                      className="flex-1"
+                      className="flex-1 bg-white/90 dark:bg-gray-800/90"
                     />
                     <Button
                       onClick={sendMessage}

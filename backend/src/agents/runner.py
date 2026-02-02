@@ -42,10 +42,11 @@ class AgentRunner:
         Register user-scoped tools with the MCP server for the current user session.
         """
         from ..mcp.tools.task_tools import AddTaskTool, ListTasksTool, UpdateTaskTool, CompleteTaskTool, DeleteTaskTool
+        from ..mcp.tools.user_info_tool import GetUserInfoTool
 
         # Clear any existing tools for this session to avoid conflicts
         # This ensures each agent runner has fresh tools with the correct user context
-        tool_names = ['add_task', 'list_tasks', 'update_task', 'complete_task', 'delete_task']
+        tool_names = ['add_task', 'list_tasks', 'update_task', 'complete_task', 'delete_task', 'get_user_info']
         for name in tool_names:
             if name in mcp_server.tools:
                 del mcp_server.tools[name]
@@ -56,6 +57,7 @@ class AgentRunner:
         mcp_server.register_tool(UpdateTaskTool(self.db_session, self.user_id))
         mcp_server.register_tool(CompleteTaskTool(self.db_session, self.user_id))
         mcp_server.register_tool(DeleteTaskTool(self.db_session, self.user_id))
+        mcp_server.register_tool(GetUserInfoTool(self.db_session, self.user_id))
 
     def run_conversation(self, user_message: str, conversation_id: str = None) -> Dict[str, Any]:
         """
@@ -168,8 +170,9 @@ class AgentRunner:
             )
         except Exception as e:
             # If saving the response fails, try once more with a simpler message
+            # BUT we should NOT rollback here as it will undo tool operations that happened earlier
             try:
-                self.db_session.rollback()
+                # Just save the simpler message without rolling back previous operations
                 self.message_service.create_message(
                     self.db_session,
                     conversation_id=conversation_id,
@@ -179,6 +182,7 @@ class AgentRunner:
                 )
             except:
                 # If all else fails, at least don't crash the entire request
+                # Any previous tool operations remain committed
                 pass
 
         # Commit the final state

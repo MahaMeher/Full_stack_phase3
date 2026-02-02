@@ -71,7 +71,7 @@ export default function DashboardPage() {
       <div className="max-w-6xl mx-auto">
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-10">
           <div className="space-y-3">
-            <h1 className="text-4xl font-bold bg-gradient-purple-pink bg-clip-text text-transparent">
+            <h1 className="text-4xl font-bold text-foreground">
               Welcome, {user?.name || user?.email || 'User'}!
             </h1>
             <p className="text-muted-foreground/80 text-lg">
