@@ -8,13 +8,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
+import PasswordRequirements from '@/components/auth/password-requirements';
 
 export default function SignInPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPasswordRequirements, setShowPasswordRequirements] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const router = useRouter();
   const { login, loading } = useAuth();
+
+  const handlePasswordFocus = () => {
+    setShowPasswordRequirements(true);
+  };
+
+  const handlePasswordBlur = () => {
+    setShowPasswordRequirements(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,8 +98,13 @@ export default function SignInPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onFocus={handlePasswordFocus}
+              onBlur={handlePasswordBlur}
               className={errors.password ? 'border-red-500' : 'bg-white/90 dark:bg-gray-800/90'}
             />
+            {showPasswordRequirements && (
+              <PasswordRequirements password={password} isVisible={showPasswordRequirements} />
+            )}
             {errors.password && (
               <p className="text-red-500 text-sm">{errors.password}</p>
             )}

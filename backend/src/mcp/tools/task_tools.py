@@ -188,15 +188,17 @@ class UpdateTaskTool(UserScopedMCPTool):
         try:
             task_id = kwargs["task_id"]
 
-            # Pre-validate that the task_id looks like a valid identifier
-            # If it's a long string with spaces and common sentence structures, it's likely a parsing error
-            if isinstance(task_id, str) and len(task_id) > 50:
-                # This looks like a sentence rather than a task ID
-                # Check for common natural language patterns that indicate parsing errors
-                if any(phrase in task_id.lower() for phrase in ['because the task', 'namely', 'is completed', 'as well', 'mark it as']):
+            # If the task_id doesn't look like a UUID, try to find it by title
+            if not self._is_valid_uuid(task_id):
+                # Use the helper method to find the task by title
+                matched_task = self._find_task_by_title(task_id)
+
+                if matched_task:
+                    task_id = matched_task.id
+                else:
                     return ToolCallResult(
                         success=False,
-                        error="Invalid task identifier format. The AI may have misunderstood your request. Please specify the task name more directly.",
+                        error=f"Task with title '{task_id}' not found. Please list your tasks to see available options.",
                         tool_name=self.name
                     )
 
@@ -217,6 +219,14 @@ class UpdateTaskTool(UserScopedMCPTool):
                 update_data["description"] = kwargs["description"]
             if "completed" in kwargs and kwargs["completed"] is not None:
                 update_data["completed"] = kwargs["completed"]
+
+            # If no updates were provided, return an error
+            if not update_data:
+                return ToolCallResult(
+                    success=False,
+                    error="No updates provided. Please specify at least one field to update (title, description, or completed status).",
+                    tool_name=self.name
+                )
 
             task_update_obj = TaskUpdate(**update_data)
 

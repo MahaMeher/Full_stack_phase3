@@ -87,6 +87,8 @@ class TaskService:
         Raises:
             UnauthorizedUserException: If task doesn't belong to the user
         """
+        from datetime import datetime, timezone
+
         task = TaskService.get_task_by_id_and_user_id(session, task_id, user_id)
         if not task:
             return None
@@ -95,6 +97,9 @@ class TaskService:
         update_data = task_data.dict(exclude_unset=True)
         for field, value in update_data.items():
             setattr(task, field, value)
+
+        # Update the updated_at timestamp
+        task.updated_at = datetime.now(timezone.utc)
 
         session.add(task)
         try:

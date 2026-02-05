@@ -107,3 +107,51 @@ class UserScopedMCPTool(MCPTool):
         if not conversation:
             return False
         return conversation.user_id == self.user_id
+
+    def _is_valid_uuid(self, val):
+        """Check if a value looks like a UUID."""
+        import uuid
+        try:
+            uuid.UUID(str(val))
+            return True
+        except ValueError:
+            return False
+
+    def _find_task_by_title(self, title: str):
+        """
+        Find a task by its title in the user's task list.
+
+        Args:
+            title: The title or partial title of the task to find
+
+        Returns:
+            Task object if found, None otherwise
+        """
+        # Get the user's tasks
+        user_tasks = self.task_service.get_tasks_by_user_id(self.db_session, self.user_id)
+
+        if not title:
+            return None
+
+        # Clean the search term
+        search_term = title.strip().lower()
+
+        # First, try exact match
+        for task in user_tasks:
+            task_title = task.title
+            if task_title and str(task_title).lower().strip() == search_term:
+                return task
+
+        # Next, try partial match (search term contained in title)
+        for task in user_tasks:
+            task_title = task.title
+            if task_title and search_term in str(task_title).lower():
+                return task
+
+        # Try reverse match (title contained in search term)
+        for task in user_tasks:
+            task_title = task.title
+            if task_title and str(task_title).lower() in search_term:
+                return task
+
+        return None

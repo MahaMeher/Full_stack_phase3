@@ -121,6 +121,27 @@ class AgentRunner:
                 conversation_history=formatted_history[:-1]  # Exclude current user message
             )
 
+            # Only apply safety checks for update requests, not completion requests
+            user_input_lower = user_message.lower()
+            update_keywords = ['update', 'change', 'modify', 'rename', 'alter']
+            has_update_intent = any(keyword in user_input_lower for keyword in update_keywords)
+
+            # Only apply this safety check if the AI response contains definitive language about updating without any tools
+            # Don't apply this check if the AI is asking for more information (like asking to list tasks)
+            if has_update_intent and 'task' in user_input_lower and \
+               result.get("has_tool_calls", False) == False and \
+               result.get("tool_calls", []) == [] and \
+               any(phrase in result.get("response", "").lower() for phrase in ['task updated', 'has been updated', 'updated successfully', 'updated the task']) and \
+               not any(phrase in result.get("response", "").lower() for phrase in ['need to know', 'which specific task', 'list your tasks', 'be more specific']):
+
+                # The AI claimed to update a task without calling the update tool
+                result["response"] = "I heard your request to update a task, but I need to know which specific task to update. Could you please list your tasks first or be more specific about which task you want to update? For example: 'Update the task buy groceries to say buy organic groceries'."
+                result["has_tool_calls"] = False
+                result["tool_calls"] = []
+                result["tool_results"] = []
+            # For completion requests, don't apply the same aggressive safety check
+            # Let the AI handle completion requests naturally
+
             # Check if there were any errors in tool results
             for tool_result in result.get("tool_results", []):
                 if tool_result.get("result", {}).get("success") == False:

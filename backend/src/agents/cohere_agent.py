@@ -6,6 +6,7 @@ Implements natural language understanding and tool selection for task management
 import json
 from typing import Dict, Any, List, Optional
 from cohere import Client
+from datetime import datetime
 from ..config.settings import settings
 from ..mcp.server import MCPServer, ToolCallResult
 
@@ -48,6 +49,12 @@ class CohereAgent:
         - If user says "delete the task buy laptop", immediately execute delete_task
         - Only ask for clarification if you can't identify which task they mean
 
+        FOR UPDATE TASKS SPECIFICALLY:
+        - When user says "update task X", "change task X", "modify task X", or similar, ALWAYS call update_task
+        - If user provides new title or description, include it in the update_task call
+        - If user says "update the task to X" or "update it to X", call update_task with new title/description
+        - DO NOT generate responses claiming tasks were updated without calling update_task tool
+
         For casual conversation (greetings, small talk, general questions), respond naturally
         and use the get_user_info tool to personalize responses when appropriate.
         Only use task-related tools when the user explicitly requests task operations
@@ -75,6 +82,7 @@ class CohereAgent:
         For general conversation, respond naturally and appropriately use get_user_info when relevant.
 
         Remember: Execute user requests immediately. Don't ask "Would you like me to..." - just do what they asked.
+        CRITICAL: When user asks to update a task, you MUST call the update_task tool. Do not fabricate responses.
         """
 
     def _prepare_conversation_history(self, messages: List[Dict[str, str]]) -> str:
@@ -297,8 +305,29 @@ class CohereToolAgent(CohereAgent):
         if conversation_history is None:
             conversation_history = []
 
+        # Resolve context references in user input using conversation history
+        resolved_input = self._resolve_context_references(user_input, conversation_history)
+
+        # Check if this is an update task request and handle it directly
+        update_result = self._handle_direct_update_request(resolved_input)
+        if update_result:
+            return update_result
+
+        # Check if this is a complete task request and handle it directly
+        complete_result = self._handle_direct_complete_request(resolved_input)
+        if complete_result:
+            return complete_result
+
+        # Check if this is a delete task request and handle it directly
+        delete_result = self._handle_direct_delete_request(resolved_input)
+        if delete_result:
+            return delete_result
+
+        # Pre-process the user input to handle specific patterns before sending to AI
+        processed_input = self._preprocess_user_input(resolved_input)
+
         # Check if the input is a casual conversation that doesn't require tools
-        if self._is_general_conversation(user_input):
+        if self._is_general_conversation(processed_input):
             # Handle general conversation without tools, but allow for user info when appropriate
             # Check if user is asking for their information
             lower_input = user_input.lower().strip()
@@ -390,7 +419,7 @@ class CohereToolAgent(CohereAgent):
 
         # Prepare the full context
         full_context = self._prepare_conversation_history(conversation_history)
-        full_context += f"\nUser: {user_input}"
+        full_context += f"\nUser: {processed_input}"
 
         # Get available tool schemas and adapt for Cohere format
         original_schemas = self.mcp_server.get_all_tool_schemas()
@@ -444,11 +473,89 @@ class CohereToolAgent(CohereAgent):
                 tool_schemas.append(adapted_schema)
 
         try:
+            # Check if this is an update request that the AI might miss
+            # First, let's manually detect if this is an update request before calling the AI
+            import re
+
+            # Pattern detection for update requests
+            update_patterns = [
+                r'update\s+the\s+task\s+na[m]{1,3}ely\s+(.+?)\s+to\s+(.+)',  # Handles "namely", "namley", etc.
+                r'update\s+the\s+task\s+for\s+me\s+na[m]{1,3}ely\s+(.+?)\s+to\s+(.+)',  # For "update the task for me namely/namley"
+                r'update\s+the\s+task\s+(.+?)\s+to\s+(.+)',
+                r'update\s+(.+?)\s+to\s+(.+)',
+                r'modify\s+the\s+task\s+(.+?)\s+to\s+(.+)',
+                r'modify\s+(.+?)\s+to\s+(.+)',
+                r'change\s+the\s+task\s+(.+?)\s+to\s+(.+)',
+                r'change\s+(.+?)\s+to\s+(.+)',
+            ]
+
+            manual_update_detection = None
+            for pattern in update_patterns:
+                match = re.search(pattern, processed_input.lower())
+                if match:
+                    manual_update_detection = match
+                    break
+
+            # If we detect an update pattern manually, ensure the AI calls the update tool
+            if manual_update_detection:
+                # First, get the user's tasks to see if the target task exists
+                list_result = self.mcp_server.execute_tool('list_tasks', filter_completed=None)
+
+                if list_result.success and list_result.data:
+                    # Extract the task name and new value from the match
+                    task_name = manual_update_detection.group(1).strip()
+                    new_value = manual_update_detection.group(2).strip()
+
+                    # Look for the task in the user's task list
+                    target_task = None
+                    for task in list_result.data:
+                        if task_name.lower() in task.get('title', '').lower() or task.get('title', '').lower() in task_name.lower():
+                            target_task = task
+                            break
+
+                    # If we found the target task, call the update tool directly
+                    if target_task:
+                        # Determine if the new value contains both title and description
+                        new_title = new_value
+                        new_description = None
+
+                        # Check if there's a description part in the original request
+                        desc_match = re.search(r'to\s+(.+?)\s+and\s+add\s+description\s+(.+)', processed_input.lower())
+                        if desc_match:
+                            new_title = desc_match.group(1).strip()
+                            new_description = desc_match.group(2).strip()
+
+                        # Prepare update parameters
+                        update_params = {
+                            "task_id": target_task['id'],
+                            "title": new_title
+                        }
+
+                        if new_description:
+                            update_params["description"] = new_description
+
+                        # Execute the update tool directly
+                        update_result = self.mcp_server.execute_tool('update_task', **update_params)
+
+                        # Format response for successful update
+                        if update_result.success and update_result.data:
+                            return {
+                                "response": f"Task '{target_task['title']}' has been updated successfully.\n\nNew Title: {update_result.data.get('title', 'N/A')}\nNew Description: {update_result.data.get('description', 'N/A')}",
+                                "tool_calls": [{"name": "update_task", "parameters": update_params}],
+                                "tool_results": [{
+                                    "tool_call_id": None,
+                                    "name": "update_task",
+                                    "parameters": update_params,
+                                    "result": update_result.dict() if hasattr(update_result, 'dict') else {"success": update_result.success, "data": update_result.data, "error": update_result.error}
+                                }],
+                                "has_tool_calls": True
+                            }
+
             # Use Cohere's chat endpoint with tools
             # Only pass tools if we have valid ones to avoid API errors
             if tool_schemas:  # Only pass tools if the array is not empty
                 response = self.client.chat(
-                    message=user_input,
+                    message=processed_input,
                     model=self.model,
                     preamble=self._format_system_instructions(),
                     tools=tool_schemas
@@ -634,134 +741,229 @@ class CohereToolAgent(CohereAgent):
             if 'task_id' in parameters:
                 # Check if the task_id is a valid UUID-like string (which would be an actual ID)
                 # If it's not a valid UUID, treat it as a potential task name/title
-                if not self._is_valid_uuid(parameters['task_id']):
-                    # This looks like a task name/title, try to find the actual ID
-                    task_identifier = parameters['task_id']
+                task_identifier = parameters['task_id']
 
-                    # First, let's clean the identifier by removing common natural language patterns
-                    original_identifier = str(task_identifier).strip()
+                # If it's already a valid UUID, return as is
+                if self._is_valid_uuid(task_identifier):
+                    return parameters
 
-                    # Comprehensive pattern matching for various natural language constructs
-                    import re
+                # This looks like a task name/title, try to find the actual ID
+                original_identifier = str(task_identifier).strip()
 
-                    # Pattern: "mrk it as completed because the task namely [TASK_NAME] is completed"
-                    pattern1 = r'mrk it as completed because the task namely ([^is]+) is completed'
-                    match1 = re.search(pattern1, original_identifier.lower())
-                    if match1:
-                        extracted_task_name = match1.group(1).strip()
-                        if extracted_task_name:
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
+                # Comprehensive pattern matching for various natural language constructs
+                import re
 
-                    # Pattern: "mark it as completed because the task named [TASK_NAME] is completed"
-                    pattern2 = r'mark it as completed because the task named ([^is]+) is completed'
-                    match2 = re.search(pattern2, original_identifier.lower())
-                    if match2:
-                        extracted_task_name = match2.group(1).strip()
-                        if extracted_task_name:
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
-
-                    # Pattern: "the task [TASK_NAME] is completed"
-                    pattern3 = r'the task ([^is]+) is completed'
-                    match3 = re.search(pattern3, original_identifier.lower())
-                    if match3:
-                        extracted_task_name = match3.group(1).strip()
-                        if extracted_task_name:
-                            # Remove common articles and prepositions that might be included in the extracted name
-                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
-
-                    # Pattern: "mrk [TASK_NAME] as completed" or "mark [TASK_NAME] as completed"
-                    pattern4 = r'(?:mrk|mark)\s+(.+?)\s+as completed'
-                    match4 = re.search(pattern4, original_identifier.lower())
-                    if match4:
-                        extracted_task_name = match4.group(1).strip()
-                        if extracted_task_name:
-                            # Remove common articles and prepositions that might be included in the extracted name
-                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
-
-                    # Pattern: "[TASK_NAME] should be completed" or "[TASK_NAME] needs to be completed"
-                    pattern5 = r'(.+?)\s+(?:should be|needs to be|has to be|must be)\s+completed'
-                    match5 = re.search(pattern5, original_identifier.lower())
-                    if match5:
-                        extracted_task_name = match5.group(1).strip()
-                        if extracted_task_name:
-                            # Remove common articles and prepositions that might be included in the extracted name
-                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
-
-                    # Pattern: "complete the [TASK_NAME] task" or "complete [TASK_NAME]"
-                    pattern6 = r'complete\s+(?:the\s+)?(.+?)(?:\s+task)?$'
-                    match6 = re.search(pattern6, original_identifier.lower())
-                    if match6:
-                        extracted_task_name = match6.group(1).strip()
-                        if extracted_task_name:
-                            # Remove common articles and prepositions that might be included in the extracted name
-                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
-
-                    # Pattern: "update the [TASK_NAME] task" or "update [TASK_NAME]"
-                    pattern7 = r'update\s+(?:the\s+)?(.+?)(?:\s+task)?$'
-                    match7 = re.search(pattern7, original_identifier.lower())
-                    if match7:
-                        extracted_task_name = match7.group(1).strip()
-                        if extracted_task_name:
-                            # Remove common articles and prepositions that might be included in the extracted name
-                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
-
-                    # Pattern: "delete the [TASK_NAME] task" or "delete [TASK_NAME]"
-                    pattern8 = r'delete\s+(?:the\s+)?(.+?)(?:\s+task)?$'
-                    match8 = re.search(pattern8, original_identifier.lower())
-                    if match8:
-                        extracted_task_name = match8.group(1).strip()
-                        if extracted_task_name:
-                            # Remove common articles and prepositions that might be included in the extracted name
-                            extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
-                            task_id = self._find_task_by_name(extracted_task_name)
-                            if task_id:
-                                resolved_params = parameters.copy()
-                                resolved_params['task_id'] = task_id
-                                return resolved_params
-
-                    # If we reach here, try to find the task in the user's task list using the cleaned identifier
-                    # Remove common phrases that might interfere with matching
-                    cleaned_identifier = self._clean_task_identifier(original_identifier)
-
-                    if cleaned_identifier and len(cleaned_identifier) > 1:
-                        task_id = self._find_task_by_name(cleaned_identifier)
+                # Pattern: "mrk it as completed because the task namely [TASK_NAME] is completed"
+                pattern1 = r'mrk it as completed because the task namely ([^is]+) is completed'
+                match1 = re.search(pattern1, original_identifier.lower())
+                if match1:
+                    extracted_task_name = match1.group(1).strip()
+                    if extracted_task_name:
+                        task_id = self._find_task_by_name(extracted_task_name)
                         if task_id:
                             resolved_params = parameters.copy()
                             resolved_params['task_id'] = task_id
                             return resolved_params
+
+                # Pattern: "mark it as completed because the task named [TASK_NAME] is completed"
+                pattern2 = r'mark it as completed because the task named ([^is]+) is completed'
+                match2 = re.search(pattern2, original_identifier.lower())
+                if match2:
+                    extracted_task_name = match2.group(1).strip()
+                    if extracted_task_name:
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            return resolved_params
+
+                # Pattern: "the task [TASK_NAME] is completed"
+                pattern3 = r'the task ([^is]+) is completed'
+                match3 = re.search(pattern3, original_identifier.lower())
+                if match3:
+                    extracted_task_name = match3.group(1).strip()
+                    if extracted_task_name:
+                        # Remove common articles and prepositions that might be included in the extracted name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            return resolved_params
+
+                # Pattern: "mrk [TASK_NAME] as completed" or "mark [TASK_NAME] as completed"
+                pattern4 = r'(?:mrk|mark)\s+(.+?)\s+as completed'
+                match4 = re.search(pattern4, original_identifier.lower())
+                if match4:
+                    extracted_task_name = match4.group(1).strip()
+                    if extracted_task_name:
+                        # Remove common articles and prepositions that might be included in the extracted name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            return resolved_params
+
+                # Pattern: "[TASK_NAME] should be completed" or "[TASK_NAME] needs to be completed"
+                pattern5 = r'(.+?)\s+(?:should be|needs to be|has to be|must be)\s+completed'
+                match5 = re.search(pattern5, original_identifier.lower())
+                if match5:
+                    extracted_task_name = match5.group(1).strip()
+                    if extracted_task_name:
+                        # Remove common articles and prepositions that might be included in the extracted name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            return resolved_params
+
+                # Pattern: "complete the [TASK_NAME] task" or "complete [TASK_NAME]"
+                pattern6 = r'complete\s+(?:the\s+)?(.+?)(?:\s+task)?$'
+                match6 = re.search(pattern6, original_identifier.lower())
+                if match6:
+                    extracted_task_name = match6.group(1).strip()
+                    if extracted_task_name:
+                        # Remove common articles and prepositions that might be included in the extracted name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            return resolved_params
+
+                # Pattern: "update the [TASK_NAME] task" or "update [TASK_NAME]"
+                pattern7 = r'update\s+(?:the\s+)?(.+?)(?:\s+task)?$'
+                match7 = re.search(pattern7, original_identifier.lower())
+                if match7:
+                    extracted_task_name = match7.group(1).strip()
+                    if extracted_task_name:
+                        # Remove common articles and prepositions that might be included in the extracted name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            return resolved_params
+
+                # Pattern: "delete the [TASK_NAME] task" or "delete [TASK_NAME]"
+                pattern8 = r'delete\s+(?:the\s+)?(.+?)(?:\s+task)?$'
+                match8 = re.search(pattern8, original_identifier.lower())
+                if match8:
+                    extracted_task_name = match8.group(1).strip()
+                    if extracted_task_name:
+                        # Remove common articles and prepositions that might be included in the extracted name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            return resolved_params
+
+                # Enhanced update_task specific pattern matching
+                if tool_name == 'update_task':
+                    # Pattern: "update task [TASK_NAME] to [NEW_TITLE]" or "update [TASK_NAME] to [NEW_VALUE]"
+                    pattern_update = r'(?:update|modify|change)\s+(?:the\s+)?(?:task\s+)?(.+?)\s+to\s+(.+)$'
+                    match_update = re.search(pattern_update, original_identifier.lower())
+                    if match_update:
+                        extracted_task_name = match_update.group(1).strip()
+                        update_content = match_update.group(2).strip()
+
+                        # Clean the task name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+
+                            # If we don't have explicit title/description parameters, try to infer them from the update content
+                            if 'title' not in resolved_params and 'description' not in resolved_params:
+                                # For update_task, we need at least one of title or description
+                                resolved_params['title'] = update_content
+
+                            return resolved_params
+
+                    # Pattern: "update task [TASK_NAME] with [NEW_TITLE]" or "update [TASK_NAME] with [NEW_VALUE]"
+                    pattern_update2 = r'(?:update|modify|change)\s+(?:the\s+)?(?:task\s+)?(.+?)\s+with\s+(.+)$'
+                    match_update2 = re.search(pattern_update2, original_identifier.lower())
+                    if match_update2:
+                        extracted_task_name = match_update2.group(1).strip()
+                        update_content = match_update2.group(2).strip()
+
+                        # Clean the task name
+                        extracted_task_name = re.sub(r'\b(the|a|an|task)\b', '', extracted_task_name).strip()
+
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+
+                            # If we don't have explicit title/description parameters, try to infer them
+                            if 'title' not in resolved_params and 'description' not in resolved_params:
+                                resolved_params['title'] = update_content
+
+                            return resolved_params
+
+                    # Pattern: "update the task namely [TASK_NAME] to [NEW_TITLE]" - your specific case
+                    pattern_update3 = r'update\s+(?:the\s+)?task\s+namely\s+(.+?)\s+to\s+(.+)$'
+                    match_update3 = re.search(pattern_update3, original_identifier.lower())
+                    if match_update3:
+                        extracted_task_name = match_update3.group(1).strip()
+                        update_content = match_update3.group(2).strip()
+
+                        # Look for "and add description" pattern in the update content
+                        desc_pattern = r'(.+?)\s+and\s+add\s+description\s+(.+)$'
+                        desc_match = re.search(desc_pattern, update_content.lower())
+
+                        if desc_match:
+                            # Separate the new title and description
+                            new_title = desc_match.group(1).strip()
+                            new_description = desc_match.group(2).strip()
+
+                            task_id = self._find_task_by_name(extracted_task_name)
+                            if task_id:
+                                resolved_params = parameters.copy()
+                                resolved_params['task_id'] = task_id
+                                resolved_params['title'] = new_title
+                                resolved_params['description'] = new_description
+                                return resolved_params
+                        else:
+                            # No separate description, treat entire update content as title
+                            task_id = self._find_task_by_name(extracted_task_name)
+                            if task_id:
+                                resolved_params = parameters.copy()
+                                resolved_params['task_id'] = task_id
+                                resolved_params['title'] = update_content
+                                return resolved_params
+
+                    # Pattern: "update [TASK_NAME] to [NEW_TITLE] and add description [DESCRIPTION]"
+                    pattern_update4 = r'update\s+(.+?)\s+to\s+(.+?)\s+and\s+add\s+description\s+(.+)$'
+                    match_update4 = re.search(pattern_update4, original_identifier.lower())
+                    if match_update4:
+                        extracted_task_name = match_update4.group(1).strip()
+                        new_title = match_update4.group(2).strip()
+                        new_description = match_update4.group(3).strip()
+
+                        task_id = self._find_task_by_name(extracted_task_name)
+                        if task_id:
+                            resolved_params = parameters.copy()
+                            resolved_params['task_id'] = task_id
+                            resolved_params['title'] = new_title
+                            resolved_params['description'] = new_description
+                            return resolved_params
+
+                # If we reach here, try to find the task in the user's task list using the cleaned identifier
+                # Remove common phrases that might interfere with matching
+                cleaned_identifier = self._clean_task_identifier(original_identifier)
+
+                if cleaned_identifier and len(cleaned_identifier) > 1:
+                    task_id = self._find_task_by_name(cleaned_identifier)
+                    if task_id:
+                        resolved_params = parameters.copy()
+                        resolved_params['task_id'] = task_id
+                        return resolved_params
 
         return parameters
 
@@ -886,3 +1088,471 @@ class CohereToolAgent(CohereAgent):
             return True
         except ValueError:
             return False
+
+    def _handle_direct_update_request(self, user_input: str) -> Optional[Dict[str, Any]]:
+        """
+        Directly handle update task requests by bypassing the AI and calling the tool directly.
+
+        Args:
+            user_input: The original user input
+
+        Returns:
+            Dict with tool call results if it's an update request, None otherwise
+        """
+        import re
+
+        # Normalize input for pattern matching
+        input_lower = user_input.lower().strip()
+
+        # Patterns for update requests
+        patterns = [
+            # "update the task for me namely doing homework to doing nothing and add description"
+            r'update\s+the\s+task\s+for\s+me\s+(?:namely|namley)\s+(.+?)\s+to\s+(.+?)(?:\s+and\s+add\s+description\s+(.+))?$',
+
+            # "update the task doing homework to doing nothing and add description"
+            r'update\s+the\s+task\s+(.+?)\s+to\s+(.+?)(?:\s+and\s+add\s+description\s+(.+))?$',
+
+            # "update doing homework to doing nothing and add description"
+            r'update\s+(.+?)\s+to\s+(.+?)(?:\s+and\s+add\s+description\s+(.+?))?(?:\s+and.*)?$',
+            # "update doing homework to doing nothing and add description accordingly"
+            r'update\s+(.+?)\s+to\s+(.+?)\s+and\s+add\s+description\s+accordingly$',
+
+            # Variations without description
+            r'update\s+the\s+task\s+for\s+me\s+(?:namely|namley)\s+(.+?)\s+to\s+(.+)$',
+            r'update\s+the\s+task\s+(.+?)\s+to\s+(.+)$',
+            r'update\s+(.+?)\s+to\s+(.+)$',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, input_lower)
+            if match:
+                groups = match.groups()
+
+                if len(groups) >= 2:
+                    task_name = groups[0].strip()
+                    new_title = groups[1].strip()
+
+                    # Check if description is provided
+                    new_description = groups[2].strip() if len(groups) > 2 and groups[2] else None
+
+                    # Get the user's tasks to find the matching one
+                    list_result = self.mcp_server.execute_tool('list_tasks', filter_completed=None)
+
+                    if list_result.success and list_result.data:
+                        # Find the task to update
+                        target_task = None
+                        for task in list_result.data:
+                            if task_name.lower().strip() in task.get('title', '').lower().strip() or \
+                               task.get('title', '').lower().strip() in task_name.lower().strip():
+                                target_task = task
+                                break
+
+                        if target_task:
+                            # Prepare update parameters
+                            update_params = {
+                                "task_id": target_task['id'],
+                                "title": new_title
+                            }
+
+                            if new_description:
+                                # Check if the description is "accordingly" and handle it specially
+                                if new_description.lower().strip() == "accordingly":
+                                    update_params["description"] = f"Updated from '{target_task['title']}' to '{new_title}', per user request"
+                                else:
+                                    update_params["description"] = new_description
+                            elif "on your own" in input_lower or "accordingly" in input_lower:
+                                # If "on your own" or "accordingly" is in the request, create a meaningful description
+                                update_params["description"] = f"Updated from '{target_task['title']}' to '{new_title}', per user request"
+
+                            # Execute the update tool directly
+                            update_result = self.mcp_server.execute_tool('update_task', **update_params)
+
+                            # Format response for successful update
+                            if update_result.success and update_result.data:
+                                response_text = f"Task '{target_task['title']}' has been updated successfully.\n\nNew Title: {update_result.data.get('title', 'N/A')}"
+                                if update_result.data.get('description'):
+                                    response_text += f"\nNew Description: {update_result.data.get('description', 'N/A')}"
+
+                                return {
+                                    "response": response_text,
+                                    "tool_calls": [{"name": "update_task", "parameters": update_params}],
+                                    "tool_results": [{
+                                        "tool_call_id": None,
+                                        "name": "update_task",
+                                        "parameters": update_params,
+                                        "result": update_result.dict() if hasattr(update_result, 'dict') else {"success": update_result.success, "data": update_result.data, "error": update_result.error}
+                                    }],
+                                    "has_tool_calls": True
+                                }
+
+        return None  # Not an update request we can handle
+
+    def _handle_direct_delete_request(self, user_input: str) -> Optional[Dict[str, Any]]:
+        """
+        Directly handle delete task requests by bypassing the AI and calling the tool directly.
+
+        Args:
+            user_input: The original user input
+
+        Returns:
+            Dict with tool call results if it's a delete request, None otherwise
+        """
+        import re
+
+        # Normalize input for pattern matching
+        input_lower = user_input.lower().strip()
+
+        # Patterns for delete requests
+        patterns = [
+            # "delete the task do it now"
+            r'delete\s+the\s+task\s+(.+?)$',
+
+            # "delete do it now"
+            r'delete\s+(.+?)$',
+
+            # "remove the task do it now"
+            r'remove\s+the\s+task\s+(.+?)$',
+
+            # "remove do it now"
+            r'remove\s+(.+?)$',
+
+            # "drop the task do it now"
+            r'drop\s+the\s+task\s+(.+?)$',
+
+            # "eliminate the task do it now"
+            r'eliminate\s+the\s+task\s+(.+?)$',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, input_lower)
+            if match:
+                task_name = match.group(1).strip()
+
+                # Get the user's tasks to find the matching one
+                list_result = self.mcp_server.execute_tool('list_tasks', filter_completed=None)
+
+                if list_result.success and list_result.data:
+                    # Find the task to delete
+                    target_task = None
+                    for task in list_result.data:
+                        if task_name.lower().strip() in task.get('title', '').lower().strip() or \
+                           task.get('title', '').lower().strip() in task_name.lower().strip():
+                            target_task = task
+                            break
+
+                    if target_task:
+                        # Prepare delete parameters
+                        delete_params = {
+                            "task_id": target_task['id']
+                        }
+
+                        # Execute the delete tool directly
+                        delete_result = self.mcp_server.execute_tool('delete_task', **delete_params)
+
+                        # Format response for successful deletion
+                        if delete_result.success and delete_result.data:
+                            response_text = f"Task '{target_task['title']}' has been deleted successfully."
+
+                            return {
+                                "response": response_text,
+                                "tool_calls": [{"name": "delete_task", "parameters": delete_params}],
+                                "tool_results": [{
+                                    "tool_call_id": None,
+                                    "name": "delete_task",
+                                    "parameters": delete_params,
+                                    "result": delete_result.dict() if hasattr(delete_result, 'dict') else {"success": delete_result.success, "data": delete_result.data, "error": delete_result.error}
+                                }],
+                                "has_tool_calls": True
+                            }
+
+        return None  # Not a delete request we can handle
+
+    def _handle_direct_complete_request(self, user_input: str) -> Optional[Dict[str, Any]]:
+        """
+        Directly handle complete task requests by bypassing the AI and calling the tool directly.
+
+        Args:
+            user_input: The original user input
+
+        Returns:
+            Dict with tool call results if it's a complete request, None otherwise
+        """
+        import re
+
+        # Normalize input for pattern matching
+        input_lower = user_input.lower().strip()
+
+        # Patterns for complete requests
+        patterns = [
+            # "task do it now is completed"
+            r'task\s+(.+?)\s+is\s+completed$',
+
+            # "mark task do it now as completed"
+            r'mark\s+task\s+(.+?)\s+as\s+completed$',
+
+            # "mark the task do it now as completed" - your specific case
+            r'mark\s+the\s+task\s+(.+?)\s+as\s+completed$',
+
+            # "complete the task do it now"
+            r'complete\s+the\s+task\s+(.+?)$',
+
+            # "complete do it now"
+            r'complete\s+(.+?)$',
+
+            # "finish task do it now"
+            r'finish\s+(?:the\s+)?task\s+(.+?)$',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, input_lower)
+            if match:
+                task_name = match.group(1).strip()
+
+                # Get the user's tasks to find the matching one
+                list_result = self.mcp_server.execute_tool('list_tasks', filter_completed=None)
+
+                if list_result.success and list_result.data:
+                    # Find the task to complete
+                    target_task = None
+                    for task in list_result.data:
+                        if task_name.lower().strip() in task.get('title', '').lower().strip() or \
+                           task.get('title', '').lower().strip() in task_name.lower().strip():
+                            target_task = task
+                            break
+
+                    if target_task:
+                        # Prepare complete parameters
+                        complete_params = {
+                            "task_id": target_task['id']
+                        }
+
+                        # Execute the complete tool directly
+                        complete_result = self.mcp_server.execute_tool('complete_task', **complete_params)
+
+                        # Format response for successful completion
+                        if complete_result.success and complete_result.data:
+                            response_text = f"Task '{target_task['title']}' has been marked as completed successfully."
+
+                            return {
+                                "response": response_text,
+                                "tool_calls": [{"name": "complete_task", "parameters": complete_params}],
+                                "tool_results": [{
+                                    "tool_call_id": None,
+                                    "name": "complete_task",
+                                    "parameters": complete_params,
+                                    "result": complete_result.dict() if hasattr(complete_result, 'dict') else {"success": complete_result.success, "data": complete_result.data, "error": complete_result.error}
+                                }],
+                                "has_tool_calls": True
+                            }
+
+        return None  # Not a complete request we can handle
+
+    def _resolve_context_references(self, user_input: str, conversation_history: List[Dict[str, str]]) -> str:
+        """
+        Resolve context references like 'it', 'that', 'the task' by looking at conversation history
+        and also by understanding references within the same sentence.
+
+        Args:
+            user_input: The current user input
+            conversation_history: Previous messages in the conversation
+
+        Returns:
+            Resolved input with context references replaced with specific task names
+        """
+        import re
+
+        # First, try to resolve references within the same sentence
+        # Pattern: "the task X is Y. delete it" or "task X is Y, remove it"
+        same_sentence_patterns = [
+            # "the task do it now is being done. delete it for me"
+            r'(?:the\s+)?task\s+([^.!?]+?)\s+is\s+[^.!?]*?\.\s*(delete|remove|complete|finish|mark|update|change)\s+it',
+
+            # "i have completed my task do it now. so delete it for me" - your specific case
+            r'(?:i\s+have\s+)?(?:completed|finished|done|marked)\s+(?:my\s+)?task\s+([^.,!?]+?)[.,]\s*(?:so|and|then)\s*(delete|remove|complete|finish|mark|update|change)\s+it',
+
+            # "i have completed task do it now, so delete it for me"
+            r'(?:i\s+have\s+)?(?:completed|finished|done|marked)\s+(?:my\s+)?task\s+([^.,!?]+?),\s*(?:so|and|then)\s*(delete|remove|complete|finish|mark|update|change)\s+it',
+
+            # "task do it now is being done, delete it for me"
+            r'(?:the\s+)?task\s+([^,.!?]+?)\s+is\s+[^,.!?]*?,\s*(delete|remove|complete|finish|mark|update|change)\s+it',
+
+            # General pattern: "task NAME something... ACTION it"
+            r'(?:the\s+)?task\s+([^,.!?]+?)\s+(?:is|are|was|were|has|have|will|would|should|can|could)\s+[^,.!?]*?[,.]\s*(delete|remove|complete|finish|mark|update|change)\s+it',
+        ]
+
+        for pattern in same_sentence_patterns:
+            match = re.search(pattern, user_input, re.IGNORECASE)
+            if match:
+                task_name = match.group(1).strip()
+                action = match.group(2).strip()
+
+                # Replace "ACTION it" with "ACTION task [task_name]"
+                resolved_input = re.sub(
+                    rf'{action}\s+it',
+                    f'{action} task {task_name}',
+                    user_input,
+                    flags=re.IGNORECASE
+                )
+                return resolved_input
+
+        # Check if the user is using pronouns like "it", "that", "the task" to refer to a previously mentioned task
+        current_input_lower = user_input.lower().strip()
+
+        # Patterns that indicate context reference
+        context_patterns = [
+            r'mark\s+it(\s+as\s+completed)?',
+            r'complete\s+it',
+            r'toggle\s+it',
+            r'update\s+it',
+            r'change\s+it',
+            r'delete\s+it',
+            r'modify\s+it',
+            r'finish\s+it',
+            r'do\s+that',
+            r'complete\s+that',
+            r'update\s+the\s+task',  # "update the task" without a specific name
+            r'complete\s+the\s+task',  # "complete the task" without a specific name
+        ]
+
+        # Look for context references in the current input
+        has_context_ref = any(re.search(pattern, current_input_lower) for pattern in context_patterns)
+
+        if has_context_ref and conversation_history:
+            # Look backward through the conversation history to find the last task mentioned
+            for i in range(len(conversation_history) - 1, -1, -1):
+                prev_message = conversation_history[i]
+
+                if prev_message.get('role') == 'user':
+                    # Look for task names in previous user messages
+                    prev_content = prev_message.get('content', '').lower()
+
+                    # Common patterns where tasks are mentioned explicitly
+                    task_patterns = [
+                        r'update\s+the\s+task\s+(.+?)(?:\s+to|$)',
+                        r'create\s+task\s+(.+?)(?:\s+|$)',
+                        r'add\s+task\s+(.+?)(?:\s+|$)',
+                        r'task\s+(.+?)\s+is\s+(?:completed|pending|done|not\s+done)',
+                        r'add\s+a\s+task\s+(.+?)(?:\s+|$)',
+                        r'do\s+(.+?)\s+now',  # For "do it now"
+                    ]
+
+                    for pattern in task_patterns:
+                        match = re.search(pattern, prev_content)
+                        if match:
+                            referenced_task = match.group(1).strip()
+
+                            # Replace context reference with the actual task name
+                            resolved_input = re.sub(r'mark\s+it', f'mark task {referenced_task}', user_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'complete\s+it', f'complete task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'update\s+it', f'update task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'update\s+the\s+task(?!\s+\w+)', f'update task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'complete\s+the\s+task(?!\s+\w+)', f'complete task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'toggle\s+it', f'toggle task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'delete\s+it', f'delete task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'change\s+it', f'change task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'modify\s+it', f'modify task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'finish\s+it', f'finish task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+
+                            return resolved_input
+
+                # Also check assistant responses for task names
+                elif prev_message.get('role') == 'assistant':
+                    prev_content = prev_message.get('content', '').lower()
+
+                    # Look for task names in assistant responses (like when it confirms updates)
+                    task_patterns_assistant = [
+                        r'task\s+[\'"](.+?)[\'"]\s+has\s+been',
+                        r'created\s+task\s+[\'"](.+?)[\'"]',
+                        r'updated\s+task\s+[\'"](.+?)[\'"]',
+                        r'added\s+task\s+[\'"](.+?)[\'"]',
+                    ]
+
+                    for pattern in task_patterns_assistant:
+                        match = re.search(pattern, prev_content)
+                        if match:
+                            referenced_task = match.group(1).strip()
+
+                            # Replace context reference with the actual task name
+                            resolved_input = re.sub(r'mark\s+it', f'mark task {referenced_task}', user_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'complete\s+it', f'complete task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'update\s+it', f'update task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'update\s+the\s+task(?!\s+\w+)', f'update task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'complete\s+the\s+task(?!\s+\w+)', f'complete task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'toggle\s+it', f'toggle task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'delete\s+it', f'delete task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'change\s+it', f'change task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'modify\s+it', f'modify task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+                            resolved_input = re.sub(r'finish\s+it', f'finish task {referenced_task}', resolved_input, flags=re.IGNORECASE)
+
+                            return resolved_input
+
+        # If no context reference is found or resolved, return the original input
+        return user_input
+
+    def _preprocess_user_input(self, user_input: str) -> str:
+        """
+        Preprocess user input to handle specific patterns that the AI might struggle with.
+
+        Args:
+            user_input: The original user input
+
+        Returns:
+            Processed input that's more likely to be correctly interpreted by the AI
+        """
+        import re
+
+        original_input = user_input.lower().strip()
+
+        # Pattern: "update the task namely [TASK_NAME] to [NEW_TITLE] and add description [DESC]"
+        # Convert to: "update task [TASK_NAME] with title [NEW_TITLE] and description [DESC]"
+        pattern_namely = r'update\s+the\s+task\s+namely\s+(.+?)\s+to\s+(.+?)\s+and\s+add\s+description\s+(.+)$'
+        match_namely = re.search(pattern_namely, original_input)
+
+        if match_namely:
+            task_name = match_namely.group(1).strip()
+            new_title = match_namely.group(2).strip()
+            description = match_namely.group(3).strip()
+
+            # Create a clearer instruction for the AI
+            processed = f"update the task '{task_name}' to have title '{new_title}' and description '{description}'"
+            return processed
+
+        # Pattern: "update the task namely [TASK_NAME] to [NEW_TITLE]"
+        pattern_namely_simple = r'update\s+the\s+task\s+namely\s+(.+?)\s+to\s+(.+)$'
+        match_namely_simple = re.search(pattern_namely_simple, original_input)
+
+        if match_namely_simple:
+            task_name = match_namely_simple.group(1).strip()
+            new_title = match_namely_simple.group(2).strip()
+
+            # Create a clearer instruction for the AI
+            processed = f"update the task '{task_name}' to have title '{new_title}'"
+            return processed
+
+        # Pattern: "update [TASK_NAME] to [NEW_TITLE] and add description [DESC]"
+        pattern_update_desc = r'update\s+(.+?)\s+to\s+(.+?)\s+and\s+add\s+description\s+(.+)$'
+        match_update_desc = re.search(pattern_update_desc, original_input)
+
+        if match_update_desc:
+            task_name = match_update_desc.group(1).strip()
+            new_title = match_update_desc.group(2).strip()
+            description = match_update_desc.group(3).strip()
+
+            # Create a clearer instruction for the AI
+            processed = f"update the task '{task_name}' to have title '{new_title}' and description '{description}'"
+            return processed
+
+        # Pattern: "update [TASK_NAME] to [NEW_TITLE]"
+        pattern_update_simple = r'update\s+(.+?)\s+to\s+(.+)$'
+        match_update_simple = re.search(pattern_update_simple, original_input)
+
+        if match_update_simple:
+            task_name = match_update_simple.group(1).strip()
+            new_title = match_update_simple.group(2).strip()
+
+            # Create a clearer instruction for the AI
+            processed = f"update the task '{task_name}' to have title '{new_title}'"
+            return processed
+
+        # If no pattern matches, return the original input unchanged
+        return user_input
