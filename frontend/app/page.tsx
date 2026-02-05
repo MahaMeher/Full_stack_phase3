@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -41,15 +42,18 @@ export default function Home() {
     }
   ];
 
-  // If user is authenticated, redirect to dashboard
+  const searchParams = useSearchParams();
+  const showLanding = searchParams.get('showLanding') === 'true';
+
+  // If user is authenticated, redirect to dashboard (unless explicitly requesting to show landing page)
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && user && !showLanding) {
       router.push('/dashboard');
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, showLanding]);
 
-  // Don't render anything during auth check or when user is authenticated
-  if (loading || user) {
+  // Don't render anything during auth check or when user is authenticated (unless showing landing explicitly)
+  if (loading || (user && !showLanding)) {
     return null;
   }
 

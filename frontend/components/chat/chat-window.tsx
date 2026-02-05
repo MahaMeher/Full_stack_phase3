@@ -229,14 +229,13 @@ export default function ChatWindow({ isOpen, onClose, conversationId }: ChatWind
 
                     {isLoading && (
                       <div className="flex justify-start">
-                        <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-lg bg-muted">
-                          <div className="flex items-center gap-2">
-                            <Bot className="h-4 w-4 mt-0.5" />
-                            <div className="flex space-x-1">
-                              <div className="h-2 w-2 bg-muted-foreground rounded-full animate-bounce"></div>
-                              <div className="h-2 w-2 bg-muted-foreground rounded-full animate-bounce delay-75"></div>
-                              <div className="h-2 w-2 bg-muted-foreground rounded-full animate-bounce delay-150"></div>
-                            </div>
+                        <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-lg bg-muted flex items-center gap-2">
+                          <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                          <span className="text-sm text-muted-foreground">Thinking...</span>
+                          <div className="flex space-x-1 ml-2">
+                            <div className="h-2 w-2 bg-muted-foreground rounded-full animate-bounce"></div>
+                            <div className="h-2 w-2 bg-muted-foreground rounded-full animate-bounce delay-75"></div>
+                            <div className="h-2 w-2 bg-muted-foreground rounded-full animate-bounce delay-150"></div>
                           </div>
                         </div>
                       </div>

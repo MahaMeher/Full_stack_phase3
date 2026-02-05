@@ -1,8 +1,13 @@
+'use client';
+
 import React from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/use-auth';
 
 const Footer = () => {
+  const { user, loading } = useAuth();
+
   return (
     <footer className="bg-gray-800 text-white py-6 mt-auto">
       <div className="container mx-auto px-4">
@@ -15,21 +20,33 @@ const Footer = () => {
           <div className="flex flex-wrap justify-center gap-6 mb-4 md:mb-0">
             <nav>
               <ul className="flex flex-wrap gap-4 text-sm">
-                <li><Link href="/" className="hover:text-blue-300 transition-colors">Home</Link></li>
-                <li><Link href="/dashboard" className="hover:text-blue-300 transition-colors">Dashboard</Link></li>
-                <li><Link href="/sign-in" className="hover:text-blue-300 transition-colors">Sign In</Link></li>
-                <li><Link href="/sign-up" className="hover:text-blue-300 transition-colors">Sign Up</Link></li>
+                {!loading && user ? (
+                  <>
+                    <li><Link href="/?showLanding=true" className="hover:text-blue-300 transition-colors">Home</Link></li>
+                    <li><Link href="/dashboard" className="hover:text-blue-300 transition-colors">Dashboard</Link></li>
+                  </>
+                ) : (
+                  <>
+                    <li><Link href="/" className="hover:text-blue-300 transition-colors">Home</Link></li>
+                    <li><Link href="/dashboard" className="hover:text-blue-300 transition-colors">Dashboard</Link></li>
+                    <li><Link href="/sign-in" className="hover:text-blue-300 transition-colors">Sign In</Link></li>
+                    <li><Link href="/sign-up" className="hover:text-blue-300 transition-colors">Sign Up</Link></li>
+                  </>
+                )}
               </ul>
             </nav>
           </div>
 
-          <div className="flex space-x-4">
-            <Button variant="outline" size="sm" className="border-gray-600 text-white hover:bg-gray-700 text-xs">
+          <div className="flex flex-wrap justify-center gap-4">
+            <Link href="/terms" className="text-sm hover:text-blue-300 transition-colors">
               Terms
-            </Button>
-            <Button variant="outline" size="sm" className="border-gray-600 text-white hover:bg-gray-700 text-xs">
+            </Link>
+            <Link href="/privacy" className="text-sm hover:text-blue-300 transition-colors">
               Privacy
-            </Button>
+            </Link>
+            <Link href="mailto:infoinc344@gmail.com" className="text-sm hover:text-blue-300 transition-colors">
+              Contact
+            </Link>
           </div>
         </div>
 
