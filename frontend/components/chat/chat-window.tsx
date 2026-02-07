@@ -42,6 +42,9 @@ export default function ChatWindow({ isOpen, onClose, conversationId }: ChatWind
 
   const loadConversationHistory = async () => {
     try {
+      if (!conversationId) {
+        throw new Error('No conversation ID provided');
+      }
       const response = await apiClient.getConversationHistory(conversationId);
 
       if (!response.success) {

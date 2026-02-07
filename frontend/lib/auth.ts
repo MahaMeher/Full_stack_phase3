@@ -49,7 +49,7 @@ export async function signIn(email: string, password: string): Promise<{ user: a
     });
 
     if (!response.ok) {
-      let errorData = {};
+      let errorData: { [key: string]: any } = {};
 
       try {
         errorData = await response.json();
@@ -143,7 +143,7 @@ export async function signUp(name: string, email: string, password: string): Pro
     });
 
     if (!response.ok) {
-      let errorData = {};
+      let errorData: { [key: string]: any } = {};
 
       try {
         errorData = await response.json();
@@ -177,7 +177,7 @@ export async function signUp(name: string, email: string, password: string): Pro
     });
 
     if (!loginResponse.ok) {
-      let errorData = {};
+      let errorData: { [key: string]: any } = {};
 
       try {
         errorData = await loginResponse.json();
